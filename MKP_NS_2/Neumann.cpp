@@ -94,7 +94,7 @@ vector<double> NeumannBoundaryCondition(const string& meshFile, MatrixVectorResu
 			vector<double> fi_F_F1 = { fiF(Q1),fiF(Q2),fiF(Q3) };
 			vector<double> fi_F_F2 = { fiF(Q1),fiF(Q2),fiF(Q3) };
 
-			double w = 1;
+			double w = 1.;
 
 			bNinPoints[D] += edgeLength * w * W3dotprod(fN1, fi_D_F1);
 			bNinPoints[E] += edgeLength * w * W3dotprod(fN1, fi_E_F1);

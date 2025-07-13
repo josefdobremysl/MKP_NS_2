@@ -45,6 +45,9 @@
     <ClCompile Include="vtk_p.cpp">
       <Filter>Zdrojové soubory</Filter>
     </ClCompile>
+    <ClCompile Include="Aerodynamicforce.cpp">
+      <Filter>Zdrojové soubory</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Stiffnessmatrix.h">
@@ -74,11 +77,28 @@
     <ClInclude Include="vtk_p.h">
       <Filter>Hlavičkové soubory</Filter>
     </ClInclude>
+    <ClInclude Include="Aerodynamicforce.h">
+      <Filter>Hlavičkové soubory</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Text Include="obdelnik_O.txt" />
-    <Text Include="Obdelnik_O_1375.txt" />
-    <Text Include="Obdelnik_O_1985.txt" />
-    <Text Include="Obdelnik_O_2140_50.txt" />
+    <Text Include="Obdelnik_O_1375_h.txt" />
+    <Text Include="Obdelnik_O_1985_100.txt" />
+    <Text Include="Obdelnik_O_2140_S.txt" />
+    <Text Include="trojuhelnik.txt" />
+    <Text Include="obdelnik_O_2967_c.txt" />
+    <Text Include="Obdelnik_O_800.txt" />
+    <Text Include="schod_300.txt" />
+    <Text Include="schod_1190_200.txt" />
+    <Text Include="schodS_3457_120.txt" />
+    <Text Include="schod_4195_200.txt" />
+    <Text Include="Obdelnik_O_2013_B.txt" />
+    <Text Include="Obdelnik_O_2009_A_150.txt" />
+    <Text Include="obdelnik.txt" />
+    <Text Include="Obdelnik_O_2001_600.txt" />
+    <Text Include="schod_6601_200.txt" />
+    <Text Include="Obdelnik_O_782.txt" />
+    <Text Include="Obdelnik_O_1847_800.txt" />
   </ItemGroup>
 </Project>

@@ -41,7 +41,7 @@ SparseMatrixVectorResult DirichletBoundaryCondition(const string& meshFile, Matr
 	vector<double> x(nNodes2, 0);
 	double xx = 0;
 
-	double cD = 1e4;
+	double cD = 1e8;
 	// Vyn�soben� vektoru koeficientem
 	for (double& element : bD) {
 		element *= cD;
@@ -57,7 +57,7 @@ SparseMatrixVectorResult DirichletBoundaryCondition(const string& meshFile, Matr
 	{{fiD(Q3), 0}, {fiE(Q3),0}, {fiF(Q3),0}, {0,fiD(Q3)} , {0,fiE(Q3)}, {0,fiF(Q3) }}
 	};
 
-	vector<double> w_g = { 5.0 / 18.0, 5.0 / 18.0, 8.0 / 18.0 };
+	vector<double> w_g = { 5.0 / 18.0, 8.0 / 18.0, 5.0 / 18.0 };
 	double nQuadrature = 3;
 	int index_IJ = 0;
 

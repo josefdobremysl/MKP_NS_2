@@ -86,8 +86,8 @@ SparseMatrixVectorResult MassMatrix(const string& meshFile, MatrixVectorResult& 
 	};
 
 
-	double nQuadrature = 3;
-	double w = 1 / nQuadrature;
+	double nQuadrature = 3.;
+	double w = 1. / nQuadrature;
 	int index_IJ = 0;
 
 
@@ -132,7 +132,7 @@ SparseMatrixVectorResult MassMatrix(const string& meshFile, MatrixVectorResult& 
 				double k_val = 0;
 				for (int l = 0; l < 12; ++l) {
 
-					k_val = k_val + detA / 2 * w * basisFE_ref(l, i) * basisFE_ref(l, j);
+					k_val = k_val + detA / 2. * w * basisFE_ref(l, i) * basisFE_ref(l, j);
 
 				};
 
@@ -147,7 +147,7 @@ SparseMatrixVectorResult MassMatrix(const string& meshFile, MatrixVectorResult& 
 	};
 
 	SparseMatrixVectorResult assembledMatrix = AssembledMatrix(I, J, VAL, right_side_vector);
-	SparseMatrix<double> K = assembledMatrix.sparsematrix;
+	//SparseMatrix<double> K = assembledMatrix.sparsematrix;
 
 	return assembledMatrix;
 }

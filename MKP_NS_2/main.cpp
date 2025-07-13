@@ -5,13 +5,14 @@
 #include "Stiffnessmatrix.h"
 #include "Massmatrix.h"
 //#include "mesh_t.h"
-//#include "Aerodynamicforce.h"
+#include "Aerodynamicforce.h"
 
 #include <Eigen/Sparse>
 #include <Eigen/Cholesky>
 #include <Eigen/IterativeLinearSolvers>
 
 #include <iostream>
+#include <fstream>
 #include <vector>
 #include <tuple>	
 #include "vtk.h"
@@ -27,12 +28,12 @@ int main() {
 	//double  y = 0, dy = 0, ddy = 0, gama = 0.5, beta = 0.25, yn = 0, dyn = 0, ddyn = 0;
 
 	int t_step = 0;
-	int num_t_steps = 50000;
+	int num_t_steps = 1000;
 	//vector<double> vec_aero_F(num_t_steps, 0);
 	double t = 0;
-	double dt = 0.005;
+	double dt = 1./10.;
 
-	string meshFile = "Obdelnik_O_2140_50.txt";
+	string meshFile = "Obdelnik_O_1847_800.txt";
 
 	MatrixVectorResult result = GetTriangles(meshFile);
 	int nTri = result.integerResult;		// poèet trojúhelníkù
@@ -58,6 +59,9 @@ int main() {
 
 	VectorXd x = VectorXd::Zero(xsize);
 	VectorXd x_k = VectorXd::Zero(xsize);
+	//x.segment(0, nNodes).setOnes();
+	//x_k.segment(0, nNodes).setOnes();
+
 	//VectorXd displac_p = VectorXd::Zero(xsize);
 	//VectorXd displac_n = VectorXd::Zero(xsize);
 	std::vector<double> wvec(xsize, 0.0);
@@ -75,6 +79,9 @@ int main() {
 
 
 	for (int j = 0; j < num_t_steps; j++) {
+		if (j > 50) {
+			dt=0.05;
+		}
 		//for (int i = 0; i < 1; i++) {
 		//MatrixVectorResult result1 = GetTriangles(meshFile);
 		//DisplacementResult displ_res = computeDisplacement(meshFile, result1, t, yn);
@@ -92,7 +99,7 @@ int main() {
 
 
 		// Apply Dirichlet boundary conditions
-		int tags[] = { 100, 300, 400, 500, 600 };
+		int tags[] = { 100,400, 300, 500, 600 };
 		Eigen::SparseMatrix<double> sparsematrixDirichlet(xsize, xsize);
 		vector<double> combinedBoundaryVector(xsize, 0.0);
 
@@ -114,20 +121,26 @@ int main() {
 			SparseMatrix<double> K = stiffness_matrix.sparsematrix;
 			vector<double> right_side_vector0 = stiffness_matrix.right_side_vector;
 
-			///////////////////////////////////////////////////// Crank - Nikolson
+			/////////////////////////////////////////////////// Crank - Nikolson
 			//vector<double> right_side_vector(xsize, 0);
 			//Eigen::VectorXd dtMv = ((M / dt - K / 2) * x);
 			//for (int i = 0; i < xsize; i++) {
-			//	right_side_vector[i] = right_side_vector0[i] + combinedBoundaryVector[i] + dtMv[i];
+			//	//right_side_vector[i] = right_side_vector0[i] + combinedBoundaryVector[i] + dtMv[i];
+			//	right_side_vector[i] = right_side_vector0[i] + combinedBoundaryVector[i];
+
 			//}
 			//SparseMatrix<double> A = M / dt + K / 2 + sparsematrixDirichlet;
-			/////////////////////////////////////////////// implicitni Euler
+
+
+			///////////////////////////////////////////////// implicitni Euler
 			vector<double> right_side_vector(xsize, 0);
 			VectorXd dtMv = ((M / dt) * x);
 			for (int i = 0; i < xsize; i++) {
-				right_side_vector[i] = right_side_vector0[i] + combinedBoundaryVector[i] + dtMv[i];
+				right_side_vector[i] = right_side_vector0[i] + combinedBoundaryVector[i] +dtMv[i];
+				//right_side_vector[i] = right_side_vector0[i] + combinedBoundaryVector[i];
 			}
-			SparseMatrix<double> A = M / dt + K + sparsematrixDirichlet;
+			SparseMatrix<double> A = M / dt + sparsematrixDirichlet + K;
+			//SparseMatrix<double> A = sparsematrixDirichlet + K;
 			/////////////////////////////////////////////////////////////
 
 					// Pravá strana soustavy b
@@ -140,6 +153,7 @@ int main() {
 			xPrev = x_k; // Uložení předchozího řešení
 			x_k = solver.solve(b);
 
+			//std::cout << MatrixXd(K) << std::endl;
 
 			// Tisk aktuální normy rozdílu
 			double diffNorm = (x_k - xPrev).norm();
@@ -147,7 +161,7 @@ int main() {
 
 
 			// Kontrola konvergence
-			converged = (diffNorm < 0.001);
+			converged = (diffNorm < 0.005);
 			if (converged == true) {
 				x = x_k;
 			}
@@ -156,12 +170,22 @@ int main() {
 		}
 		converged = false;
 
+		size_t dotPos1 = meshFile.find_last_of(".");
+		string File_Aero_F = "Aero_Force_"+ meshFile.substr(0, dotPos1) + ".txt";
+		vector<double> xvec(x.data(), x.data() + x.size());
+		vector<double> FF5 = AerodynamicForce(meshFile, result, 500, t, xvec);
+		vector<double> FF6 = AerodynamicForce(meshFile, result, 600, t, xvec);
+		double FF = FF5[1] + FF6[1];
+		std::ofstream file(File_Aero_F, std::ios::app);
+		
+		if (!file) {
+			std::cerr << "Nelze otevrit soubor pro zapis.\n";
+		}
+		file << j << " " << FF5[1] << " " << FF6[1] << " " << FF << "\n";
+		
+		file.close();
+		std::cout << "Data byla zapsana do souboru \n";
 
-
-		//vector<double> xvec(x.data(), x.data() + x.size());
-		//vector<double> FF5 = AerodynamicForce(meshFile, meshResult, 500, t, xvec);
-		//vector<double> FF6 = AerodynamicForce(meshFile, meshResult, 600, t, xvec);
-		//double FF = FF5[1] + FF6[1];
 		//double pi = 3.141592;
 		//double Ms = 2;
 		//double Ur = 3;
