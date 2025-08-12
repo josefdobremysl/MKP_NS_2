@@ -1,5 +1,5 @@
 ﻿#include "mesh_processor.h"
-#include "Stiffnessmatrix.h"
+#include "Aerodynamicforce2.h"
 
 #include "function.h"
 #include "Assemblematrix.h"
@@ -24,7 +24,7 @@ using namespace arma;
 
 
 
-SparseMatrixVectorResult StiffnessMatrix(const string& meshFile, MatrixVectorResult& meshResult, Eigen::VectorXd x, const double& t) {
+SparseMatrixVectorResult AerodynamicForce2(const string& meshFile, MatrixVectorResult& meshResult, Eigen::VectorXd x, const double& t) {
 
 	double Re = 800.;
 	double mu = 1. / Re;
@@ -33,11 +33,11 @@ SparseMatrixVectorResult StiffnessMatrix(const string& meshFile, MatrixVectorRes
 	MatrixVectorResult result = meshResult;
 
 	int nTri = result.integerResult;		// po�et troj�heln�k�
-	int nNodes = result.matrix3.size();			// po�et bod�
+	int nNodes = result.matrix3.size();			// pocet bodu
 
 	vector<int> M(nNodes, 0);
 	for (int k = 0; k < nTri; k++) {
-		int A = result.matrix1[k][0] - 1;					// Ozna�en� vrchol� troj�heln�ku k
+		int A = result.matrix1[k][0] - 1;					// Oznaceni vrcholu trojuhelniku k
 		int B = result.matrix1[k][1] - 1;
 		int C = result.matrix1[k][2] - 1;
 		vector<int> verTri = { A, B, C };
@@ -69,11 +69,8 @@ SparseMatrixVectorResult StiffnessMatrix(const string& meshFile, MatrixVectorRes
 	int nNodes2 = 2 * nNodes;
 	int nNodesIJ = nNodes2 * 12 * 12 * 4;
 
-	vector<int> I(nNodesIJ, 0);
-	vector<int> J(nNodesIJ, 0);
-	vector<double> VAL(nNodesIJ, 0);
-	vector<double> right_side_vector(nNodes2 + nVert, 0);		// vektor prav� strany
-	//cout << nNodes2 << endl;
+	double F_d = 0.0;
+	double F_n = 0.0;
 
 
 	mat basis_q_ref = {
@@ -82,14 +79,7 @@ SparseMatrixVectorResult StiffnessMatrix(const string& meshFile, MatrixVectorRes
 	{0.5,  0.0,  0.5},
 	};
 
-	//vector<int> idx1 = { 3, 4, 5, 9, 10, 11 };
-	//// Vytvo�en� matice basisFE_ref
-	//mat basisFE_ref = basis_Assem(idx1); // bazove f-ce v x-smeru a pak baz. fce v y-smeru
 
-	//// PD podle X baz. fci v kvadr. uzlech
-	//mat gradFEx_ref = gradFEx_ref_Assem(idx1);
-	//// PD podle Y baz. fci v kvadr. uzlech
-	//mat gradFEy_ref = gradFEy_ref_Assem(idx1);
 
 	//vector<int> idx1 = {0,1,2, 3, 4, 5,6,7,8, 9, 10, 11,12,13 };
 	vector<int> idx1 = { 0,1,2, 3, 4, 5,6,7 };
@@ -117,8 +107,8 @@ SparseMatrixVectorResult StiffnessMatrix(const string& meshFile, MatrixVectorRes
 	double nQuadrature2 = 4;
 
 	double w3 = 1. / 3.;
-	vector<double> w7 = {0.05,0.05,0.05,8./60.,8. / 60.,8. / 60.,27./60.};
-	vector<double> w4 = { 25./96.,25. / 96.,25. / 96.,-9./32. };
+	vector<double> w7 = { 0.05,0.05,0.05,8. / 60.,8. / 60.,8. / 60.,27. / 60. };
+	vector<double> w4 = { 25. / 96.,25. / 96.,25. / 96.,-9. / 32. };
 
 	int index_IJ = 0;
 
@@ -133,28 +123,20 @@ SparseMatrixVectorResult StiffnessMatrix(const string& meshFile, MatrixVectorRes
 
 		double xG_x = -1. / 9. * x(A) - 1. / 9. * x(B) - 1. / 9. * x(C) + 4. / 9. * x(D) + 4. / 9. * x(E) + 4. / 9. * x(F);
 		double xG_y = -1. / 9. * x(A + nNodes) - 1. / 9. * x(B + nNodes) - 1. / 9. * x(C + nNodes) + 4. / 9. * x(D + nNodes) + 4. / 9. * x(E + nNodes) + 4. / 9. * x(F + nNodes);
-		//mat vQ = { 0,0,0, x(D),x(E), x(F),0,0,0, x(D + nNodes), x(E + nNodes), x(F + nNodes) };
-		//
-		//mat vQ = { x(A),x(B), x(C), x(D),x(E), x(F),xG_x ,x(A + nNodes), x(B + nNodes), x(C + nNodes), x(D + nNodes), x(E + nNodes), x(F + nNodes),xG_y };
-		//mat vQ1 = { x(A),x(B), x(C),0,0,0, x(A + nNodes), x(B + nNodes), x(C + nNodes),0,0,0 };
 
 		//////////////
 		double vQ1x = 2. / 9. * x(A) - 1. / 9. * x(B) - 1. / 9. * x(C) + 4. / 9. * x(D) + 1. / 9. * x(E) + 4. / 9. * x(F);
-		double vQ2x = -1. / 9. * x(A) +2. / 9. * x(B) - 1. / 9. * x(C) + 4. / 9. * x(D) + 4. / 9. * x(E) + 1. / 9. * x(F);
-		double vQ3x = -1. / 9. * x(A) - 1. / 9. * x(B) +2. / 9. * x(C) + 1. / 9. * x(D) + 4. / 9. * x(E) + 4. / 9. * x(F);
-		double vQ4x =  -1./9.*(x(A) +x(B) + x(C)) + 4. / 9. * (x(D) +  x(E) +  x(F));
+		double vQ2x = -1. / 9. * x(A) + 2. / 9. * x(B) - 1. / 9. * x(C) + 4. / 9. * x(D) + 4. / 9. * x(E) + 1. / 9. * x(F);
+		double vQ3x = -1. / 9. * x(A) - 1. / 9. * x(B) + 2. / 9. * x(C) + 1. / 9. * x(D) + 4. / 9. * x(E) + 4. / 9. * x(F);
+		double vQ4x = -1. / 9. * (x(A) + x(B) + x(C)) + 4. / 9. * (x(D) + x(E) + x(F));
 
 		double vQ1y = 2. / 9. * x(A + nNodes) - 1. / 9. * x(B + nNodes) - 1. / 9. * x(C + nNodes) + 4. / 9. * x(D + nNodes) + 1. / 9. * x(E + nNodes) + 4. / 9. * x(F + nNodes);
-		double vQ2y= -1. / 9. * x(A + nNodes) + 2. / 9. * x(B + nNodes) - 1. / 9. * x(C + nNodes) + 4. / 9. * x(D + nNodes) + 4. / 9. * x(E + nNodes) + 1. / 9. * x(F + nNodes);
+		double vQ2y = -1. / 9. * x(A + nNodes) + 2. / 9. * x(B + nNodes) - 1. / 9. * x(C + nNodes) + 4. / 9. * x(D + nNodes) + 4. / 9. * x(E + nNodes) + 1. / 9. * x(F + nNodes);
 		double vQ3y = -1. / 9. * x(A + nNodes) - 1. / 9. * x(B + nNodes) + 2. / 9. * x(C + nNodes) + 1. / 9. * x(D + nNodes) + 4. / 9. * x(E + nNodes) + 4. / 9. * x(F + nNodes);
 		double vQ4y = -1. / 9. * (x(A + nNodes) + x(B + nNodes) + x(C + nNodes)) + 4. / 9. * (x(D + nNodes) + x(E + nNodes) + x(F + nNodes));
-		//cout << "vQ1x: " << vQ1x << " vQ2x: " << vQ2x << " vQ3x: " << vQ3x << " vQ4x: " << vQ4x << endl;
-		//cout << "vQ1y: " << vQ1y << " vQ2y: " << vQ2y << " vQ3y: " << vQ3y << " vQ4y: " << vQ4y << endl;
-		mat vQ = { vQ1x, vQ2x, vQ3x, vQ4x, vQ1y, vQ2y, vQ3y, vQ4y };
-		//////////////
-		//mat vQ = {  x(D),x(E), x(F), x(D + nNodes), x(E + nNodes), x(F + nNodes)};
 
-		//cout << x(D) << endl;
+		mat vQ = { vQ1x, vQ2x, vQ3x, vQ4x, vQ1y, vQ2y, vQ3y, vQ4y };
+
 
 
 		vector<int> verTri = { A, B, C, D, E, F };
@@ -186,8 +168,6 @@ SparseMatrixVectorResult StiffnessMatrix(const string& meshFile, MatrixVectorRes
 		mat gradFEx3 = invA(0, 0) * gradFEx_ref_3 + invA(1, 0) * gradFEy_ref_3;
 		mat gradFEy3 = invA(0, 1) * gradFEx_ref_3 + invA(1, 1) * gradFEy_ref_3;
 
-		//mat gradFExV = invA(0, 0) * gradFEx_refV + invA(1, 0) * gradFEy_refV;
-		//mat gradFEyV = invA(0, 1) * gradFEx_refV + invA(1, 1) * gradFEy_refV;
 
 		vector<int> index = { A, B, C, D, E, F, nNodes + A, nNodes + B, nNodes + C, nNodes + D, nNodes + E, nNodes + F };
 
@@ -196,8 +176,8 @@ SparseMatrixVectorResult StiffnessMatrix(const string& meshFile, MatrixVectorRes
 			for (int j = 0; j < 12; ++j) {
 				double k_val = 0;
 				double D = 0;
-                if ((i < 6 || j < 6) ^ (i > 5 || j > 5)) {
-					D=1;
+				if ((i < 6 || j < 6) ^ (i > 5 || j > 5)) {
+					D = 1;
 				}
 				for (int l = 0; l < nQuadrature2; ++l) {
 
@@ -208,58 +188,20 @@ SparseMatrixVectorResult StiffnessMatrix(const string& meshFile, MatrixVectorRes
 
 					double konvekce_i = dotprod(vQl, gradFI_j);
 
-					//cout << "i: " << i << " j: " << j << " l: " << l << " kon: " << konvekce_i << endl;
-					//cout << "vQl: " << vQl[0] << " " << vQl[1] << " " << vQl[2] << " " << vQl[3] << " " << endl;
-					//cout << "gradFEI_j: " << gradFI_j[0] << " " << gradFI_j[1] << " " << gradFI_j[2] << " " << gradFI_j[3] << endl;
-					//cout << "konvekce_i " << vQl[0] * gradFI_j[0] << " + " << vQl[1] * gradFI_j[1] << " + " << vQl[2] * gradFI_j[2] << " + " << vQl[3] * gradFI_j[3] << endl;
-					//cout << "basis_2(l,i): " << basis_2(l, i) << endl;
-					//cout << " " << endl;
 
-					k_val = k_val + detA / 2. * w4[l] * (mu * dotprod(gradFI_i, gradFI_j) +konvekce_i * basis_2(l, i)*D);
+					k_val = k_val + detA / 2. * w4[l] * (mu * dotprod(gradFI_i, gradFI_j) + konvekce_i * basis_2(l, i) * D - pQ);
 
 				};
-
+				F_d = F_d + k_val;				
 				// zapis vysledneho soucinu vektoru-tenzoru na spravne misto do tripletu 
-				I[index_IJ] = index[i];
-				J[index_IJ] = index[j];
-				VAL[index_IJ] = k_val;
+
 				index_IJ++;
 			}
-			for (int j = 0; j < 3; ++j) {
-				double k_val = 0;
-				for (int l = 0; l < 3; ++l) {
-					double div_i = gradFEx3(l, i) + gradFEy3(3 + l, i);
-
-					k_val = k_val + detA / 2. * w3 * div_i * basis_q_ref(l, j);
-				}
-				I[index_IJ] = index[i];
-				J[index_IJ] = index_pressure[index[j]] + nNodes2;
-				VAL[index_IJ] = k_val;
-				index_IJ++;
-
-				J[index_IJ] = index[i];
-				I[index_IJ] = index_pressure[index[j]] + nNodes2;
-				VAL[index_IJ] =- k_val;
-				index_IJ++;
-			}
-			vector<double> fV(12, 0);
-			for (int m = 0; m < 6; ++m) {
-				int mm = 6;
-				double X = CoQ(0, m);
-				double Y = CoQ(1, m);
-
-				fV[m] = FunctionV(X, Y)[0];
-				fV[m + mm] = FunctionV(X, Y)[1];
-			}
-
-			vector<double> basisFE_ref_i = arma::conv_to<std::vector<double>>::from(basisFE_ref.row(7));
-			right_side_vector[index[i]] = 0.5 * detA * w3 * dotprod(fV, basisFE_ref_i);
 
 		};
 	};
 
-	SparseMatrixVectorResult assembledMatrix = AssembledMatrix(I, J, VAL, right_side_vector);
-	//SparseMatrix<double> K = assembledMatrix.sparsematrix;
+
 
 	return assembledMatrix;
 }

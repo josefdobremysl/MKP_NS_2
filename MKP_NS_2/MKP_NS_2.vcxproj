@@ -124,6 +124,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="Aerodynamicforce.cpp" />
+    <ClCompile Include="Aerodynamicforce2.cpp" />
     <ClCompile Include="Assemblematrix.cpp" />
     <ClCompile Include="Dirichlet.cpp" />
     <ClCompile Include="function.cpp" />
@@ -137,6 +138,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Aerodynamicforce.h" />
+    <ClInclude Include="Aerodynamicforce2.h" />
     <ClInclude Include="Assemblematrix.h" />
     <ClInclude Include="Dirichlet.h" />
     <ClInclude Include="function.h" />
