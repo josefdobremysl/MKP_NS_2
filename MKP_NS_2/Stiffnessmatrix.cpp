@@ -26,8 +26,8 @@ using namespace arma;
 
 SparseMatrixVectorResult StiffnessMatrix(const string& meshFile, MatrixVectorResult& meshResult, Eigen::VectorXd x, const double& t) {
 
-	double Re = 800.;
-	double mu = 1. / Re;
+	const double Re = 80.0;
+	const double mu = 2.0 / 3.0 * 0.2 / Re;
 
 
 	MatrixVectorResult result = meshResult;
@@ -234,12 +234,12 @@ SparseMatrixVectorResult StiffnessMatrix(const string& meshFile, MatrixVectorRes
 				}
 				I[index_IJ] = index[i];
 				J[index_IJ] = index_pressure[index[j]] + nNodes2;
-				VAL[index_IJ] = k_val;
+				VAL[index_IJ] = -k_val;
 				index_IJ++;
 
 				J[index_IJ] = index[i];
 				I[index_IJ] = index_pressure[index[j]] + nNodes2;
-				VAL[index_IJ] =- k_val;
+				VAL[index_IJ] = k_val;
 				index_IJ++;
 			}
 			vector<double> fV(12, 0);

@@ -155,19 +155,22 @@
     <Text Include="Obdelnik_O_1375_h.txt" />
     <Text Include="Obdelnik_O_1847_800.txt" />
     <Text Include="Obdelnik_O_1985_100.txt" />
-    <Text Include="Obdelnik_O_2001_600.txt" />
     <Text Include="Obdelnik_O_2009_A_150.txt" />
     <Text Include="Obdelnik_O_2013_B.txt" />
     <Text Include="Obdelnik_O_2140_S.txt" />
     <Text Include="obdelnik_O_2967_c.txt" />
     <Text Include="Obdelnik_O_782.txt" />
     <Text Include="Obdelnik_O_800.txt" />
+    <Text Include="Obdelnik_1375.txt" />
     <Text Include="schod_300.txt" />
     <Text Include="schod_1190_200.txt" />
     <Text Include="schodS_3457_120.txt" />
     <Text Include="schod_4195_200.txt" />
     <Text Include="schod_6601_200.txt" />
     <Text Include="trojuhelnik.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Obdelnik_O_2001.txt" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

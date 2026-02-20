@@ -1,207 +1,300 @@
-﻿#include "mesh_processor.h"
-#include "Aerodynamicforce2.h"
+﻿#include "Aerodynamicforce2.h"
 
-#include "function.h"
-#include "Assemblematrix.h"
+#include <cmath>
+#include <cstdint>
+#include <unordered_map>
+#include <utility>
 
-#include <Eigen/Sparse>
-#include <armadillo>
-#include <omp.h>
+// ------------------------------------------------------------
+// P2 tvarové funkce na referenčním trojúhelníku
+// Vrcholy: A(0,0), B(1,0), C(0,1)
+// Barycentrické: L1=1-ξ-η, L2=ξ, L3=η
+// Pořadí uzlů (Gmsh 2nd order triangle):
+// 0:A, 1:B, 2:C, 3:AB, 4:BC, 5:CA
+// ------------------------------------------------------------
+static inline void p2_shape_derivs_ref(double xi, double eta, double dN_dxi[6], double dN_deta[6]) {
+    const double L1 = 1.0 - xi - eta;
+    const double L2 = xi;
+    const double L3 = eta;
 
+    // dL/dxi, dL/deta
+    const double dL1_dxi = -1.0, dL1_deta = -1.0;
+    const double dL2_dxi = 1.0, dL2_deta = 0.0;
+    const double dL3_dxi = 0.0, dL3_deta = 1.0;
 
-#include <fstream>
-#include <iostream>
-#include <string>
-#include <sstream>
-#include <vector>
-#include <tuple>
-#include <numeric>
-#include <chrono>	
-using namespace Eigen;
+    // N1 = L1(2L1-1) = 2L1^2 - L1
+    // dN1 = (4L1-1) dL1
+    const double c1 = (4.0 * L1 - 1.0);
+    dN_dxi[0] = c1 * dL1_dxi;
+    dN_deta[0] = c1 * dL1_deta;
 
-using namespace std;
-using namespace arma;
+    // N2 = L2(2L2-1)
+    const double c2 = (4.0 * L2 - 1.0);
+    dN_dxi[1] = c2 * dL2_dxi;
+    dN_deta[1] = c2 * dL2_deta;
 
+    // N3 = L3(2L3-1)
+    const double c3 = (4.0 * L3 - 1.0);
+    dN_dxi[2] = c3 * dL3_dxi;
+    dN_deta[2] = c3 * dL3_deta;
 
+    // N4 = 4 L1 L2
+    dN_dxi[3] = 4.0 * (dL1_dxi * L2 + L1 * dL2_dxi);
+    dN_deta[3] = 4.0 * (dL1_deta * L2 + L1 * dL2_deta);
 
-SparseMatrixVectorResult AerodynamicForce2(const string& meshFile, MatrixVectorResult& meshResult, Eigen::VectorXd x, const double& t) {
+    // N5 = 4 L2 L3
+    dN_dxi[4] = 4.0 * (dL2_dxi * L3 + L2 * dL3_dxi);
+    dN_deta[4] = 4.0 * (dL2_deta * L3 + L2 * dL3_deta);
 
-	double Re = 800.;
-	double mu = 1. / Re;
+    // N6 = 4 L3 L1
+    dN_dxi[5] = 4.0 * (dL3_dxi * L1 + L3 * dL1_dxi);
+    dN_deta[5] = 4.0 * (dL3_deta * L1 + L3 * dL1_deta);
+}
 
+// ------------------------------------------------------------
+// Klíč pro unordered_map z neorientované hrany (u,v) -> info
+// ------------------------------------------------------------
+static inline std::uint64_t edge_key(int a, int b) {
+    const std::uint32_t lo = (std::uint32_t)std::min(a, b);
+    const std::uint32_t hi = (std::uint32_t)std::max(a, b);
+    return (std::uint64_t(hi) << 32) | std::uint64_t(lo);
+}
 
-	MatrixVectorResult result = meshResult;
+struct AdjInfo {
+    int tri;     // index trojúhelníku v meshResult.matrix1
+    int edgeId;  // 0=AB, 1=BC, 2=CA (lokálně na referenčním trojúhelníku)
+    // globální vrcholy trojúhelníku (A,B,C):
+    int gA, gB, gC;
+    // globální P2 uzly trojúhelníku v gmsh pořadí: A,B,C,AB,BC,CA
+    int gP2[6];
+};
 
-	int nTri = result.integerResult;		// po�et troj�heln�k�
-	int nNodes = result.matrix3.size();			// pocet bodu
+// ------------------------------------------------------------
+// Hlavní funkce: trakce + přesný ∇u z přilehlého trojúhelníku
+// ------------------------------------------------------------
+std::vector<double> AerodynamicForce2(
+    const std::string& /*meshFile*/,
+    MatrixVectorResult& meshResult,
+    const int& tag,
+    const double& /*t*/,
+    const std::vector<double>& xvec
+) {
+    
+    const double Re = 50.0;
+    const double mu = 2.0 / 3.0 * 0.2 / Re;
 
-	vector<int> M(nNodes, 0);
-	for (int k = 0; k < nTri; k++) {
-		int A = result.matrix1[k][0] - 1;					// Oznaceni vrcholu trojuhelniku k
-		int B = result.matrix1[k][1] - 1;
-		int C = result.matrix1[k][2] - 1;
-		vector<int> verTri = { A, B, C };
-		for (int i = 0; i < 3; i++) {
-			M[verTri[i]] = 1;
-		}
-	}
+    auto& m = meshResult;
+    const int nTri = m.integerResult;
+    const int N = (int)m.matrix3.size();
 
-	int nVert = 0;
+    // --- mapování tlaku (shodné s tvým StiffnessMatrix/MassMatrix)
+    // tlakové DOF existují jen na "vertex" uzlech (A,B,C z každého tri)
+    std::vector<int> isVertex(N, 0);
+    for (int k = 0; k < nTri; ++k) {
+        int A = m.matrix1[k][0] - 1;
+        int B = m.matrix1[k][1] - 1;
+        int C = m.matrix1[k][2] - 1;
+        isVertex[A] = isVertex[B] = isVertex[C] = 1;
+    }
+    int trans_i = 0;
+    std::vector<int> index_pressure(N, 0);
+    for (int i = 0; i < N; ++i) {
+        if (isVertex[i]) index_pressure[i] = trans_i++;
+    }
 
-	for (int k = 0; k < nNodes; k++) {
-		nVert += M[k];
-	}
-	//cout << "index_pressure";
-	int trans_i = 0;
-	vector<int> index_pressure(nNodes, 0);
-	for (int i = 0; i < nNodes; i++) {
-		if (M[i] != 0) {
-			index_pressure[i] = trans_i;
-			trans_i++;
-		}
+    auto p_at_vertex = [&](int node)->double {
+        if (!isVertex[node]) return 0.0;
+        const int ip = index_pressure[node];
+        return xvec[2 * N + ip];
+        };
 
-	}
-	cout << endl;
+    // --- zrychlení: mapa neorientovaných hran (vrchol,vrchol) -> přilehlý trojúhelník + typ hrany
+    std::unordered_map<std::uint64_t, AdjInfo> edge2tri;
+    edge2tri.reserve((size_t)nTri * 3);
 
+    for (int k = 0; k < nTri; ++k) {
 
+        const int gA = m.matrix1[k][0] - 1;
+        const int gB = m.matrix1[k][1] - 1;
+        const int gC = m.matrix1[k][2] - 1;
+        const int gAB = m.matrix1[k][3] - 1;
+        const int gBC = m.matrix1[k][4] - 1;
+        const int gCA = m.matrix1[k][5] - 1;
 
-	//cout << "nNodes  " << nNodes << endl;
-	int nNodes2 = 2 * nNodes;
-	int nNodesIJ = nNodes2 * 12 * 12 * 4;
+        AdjInfo info;
+        info.tri = k;
+        info.gA = gA; info.gB = gB; info.gC = gC;
+        info.gP2[0] = gA; info.gP2[1] = gB; info.gP2[2] = gC;
+        info.gP2[3] = gAB; info.gP2[4] = gBC; info.gP2[5] = gCA;
 
-	double F_d = 0.0;
-	double F_n = 0.0;
+        // AB
+        info.edgeId = 0;
+        edge2tri.emplace(edge_key(gA, gB), info);
 
+        // BC
+        info.edgeId = 1;
+        edge2tri.emplace(edge_key(gB, gC), info);
 
-	mat basis_q_ref = {
-	{0.5,  0.5,  0.0},
-	{0.0,  0.5,  0.5},
-	{0.5,  0.0,  0.5},
-	};
+        // CA
+        info.edgeId = 2;
+        edge2tri.emplace(edge_key(gC, gA), info);
+    }
 
+    // --- Gauss na [0,1]
+    const double Q[3] = {
+        0.5 - std::sqrt(3.0 / 5.0) / 2.0,
+        0.5,
+        0.5 + std::sqrt(3.0 / 5.0) / 2.0
+    };
+    const double W[3] = { 5.0 / 18.0, 8.0 / 18.0, 5.0 / 18.0 };
 
+    auto ux = [&](int node) { return xvec[node]; };
+    auto uy = [&](int node) { return xvec[node + N]; };
 
-	//vector<int> idx1 = {0,1,2, 3, 4, 5,6,7,8, 9, 10, 11,12,13 };
-	vector<int> idx1 = { 0,1,2, 3, 4, 5,6,7 };
-	//vector<int> idx1 = { 0,1,2, 3, 4, 5};
-	// Vytvo�en� matice basisFE_ref
-	mat basisFE_ref = basis_Assem(idx1); // bazove f-ce v x-smeru a pak baz. fce v y-smeru
+    double Fx = 0.0, Fy = 0.0;
 
-	// PD podle X baz. fci v kvadr. uzlech
-	mat gradFEx_ref = gradFEx_ref_Assem(idx1);
-	// PD podle Y baz. fci v kvadr. uzlech
-	mat gradFEy_ref = gradFEy_ref_Assem(idx1);
+    // projdi všechny hrany, vezmi jen ty s daným tagem (válec)
+    for (int e = 0; e < (int)m.vector1.size(); ++e) {
+        if (m.vector1[e] != tag) continue;
 
-	vector<int> idx3 = { 0, 1, 2,3,4,5 };
-	// PD podle X baz. fci v kvadr. uzlech
-	mat gradFEx_ref_3 = gradFEx_ref_Assem3(idx3);
-	// PD podle Y baz. fci v kvadr. uzlech
-	mat gradFEy_ref_3 = gradFEy_ref_Assem3(idx3);
+        // gmsh 2nd order line: [D,E,F] = [end1,end2,mid]
+        const int gD = m.matrix2[e][0] - 1;
+        const int gE = m.matrix2[e][1] - 1;
+        const int gF = m.matrix2[e][2] - 1;
 
-	//vector<int> idx2 = { 0, 1, 2, 6, 7, 8 };
-	//// PD podle X baz. fci v kvadr. uzlech
-	//mat gradFEx_refV = gradFEx_ref_Assem(idx2);
-	//// PD podle Y baz. fci v kvadr. uzlech
-	//mat gradFEy_refV = gradFEx_ref_Assem(idx2);
-	double nQuadrature = 3;
-	double nQuadrature2 = 4;
+        // najdi přilehlý trojúhelník podle koncových vrcholů (gD,gE)
+        auto it = edge2tri.find(edge_key(gD, gE));
+        if (it == edge2tri.end()) {
+            // hrana bez přilehlého trojúhelníku v mapě -> nekonzistentní síť / tag
+            continue;
+        }
+        const AdjInfo adj = it->second;
 
-	double w3 = 1. / 3.;
-	vector<double> w7 = { 0.05,0.05,0.05,8. / 60.,8. / 60.,8. / 60.,27. / 60. };
-	vector<double> w4 = { 25. / 96.,25. / 96.,25. / 96.,-9. / 32. };
+        // trojúhelník (globální uzly)
+        const int gA = adj.gP2[0], gB = adj.gP2[1], gC = adj.gP2[2];
+        const int gAB = adj.gP2[3], gBC = adj.gP2[4], gCA = adj.gP2[5];
 
-	int index_IJ = 0;
+        // geometrie trojúhelníku pro Jacobian J = [B-A, C-A]
+        const auto& XA = m.matrix3[gA];
+        const auto& XB = m.matrix3[gB];
+        const auto& XC = m.matrix3[gC];
 
+        const double J00 = XB[0] - XA[0];
+        const double J01 = XC[0] - XA[0];
+        const double J10 = XB[1] - XA[1];
+        const double J11 = XC[1] - XA[1];
 
-	for (int k = 0; k < nTri; k++) {
-		int A = result.matrix1[k][0] - 1;					// Ozna�en� vrchol� troj�heln�ku k
-		int B = result.matrix1[k][1] - 1;
-		int C = result.matrix1[k][2] - 1;
-		int D = result.matrix1[k][3] - 1;					// Ozna�en� stredu stran troj�heln�ku k
-		int E = result.matrix1[k][4] - 1;
-		int F = result.matrix1[k][5] - 1;
+        const double detJ = J00 * J11 - J01 * J10;
+        if (std::abs(detJ) < 1e-14) continue;
 
-		double xG_x = -1. / 9. * x(A) - 1. / 9. * x(B) - 1. / 9. * x(C) + 4. / 9. * x(D) + 4. / 9. * x(E) + 4. / 9. * x(F);
-		double xG_y = -1. / 9. * x(A + nNodes) - 1. / 9. * x(B + nNodes) - 1. / 9. * x(C + nNodes) + 4. / 9. * x(D + nNodes) + 4. / 9. * x(E + nNodes) + 4. / 9. * x(F + nNodes);
+        // invJ = J^{-1}
+        const double invJ00 = J11 / detJ;
+        const double invJ01 = -J01 / detJ;
+        const double invJ10 = -J10 / detJ;
+        const double invJ11 = J00 / detJ;
 
-		//////////////
-		double vQ1x = 2. / 9. * x(A) - 1. / 9. * x(B) - 1. / 9. * x(C) + 4. / 9. * x(D) + 1. / 9. * x(E) + 4. / 9. * x(F);
-		double vQ2x = -1. / 9. * x(A) + 2. / 9. * x(B) - 1. / 9. * x(C) + 4. / 9. * x(D) + 4. / 9. * x(E) + 1. / 9. * x(F);
-		double vQ3x = -1. / 9. * x(A) - 1. / 9. * x(B) + 2. / 9. * x(C) + 1. / 9. * x(D) + 4. / 9. * x(E) + 4. / 9. * x(F);
-		double vQ4x = -1. / 9. * (x(A) + x(B) + x(C)) + 4. / 9. * (x(D) + x(E) + x(F));
+        // jednotková normála hrany z (gD -> gE) (orientaci můžeš případně flipnout)
+        const auto& XD = m.matrix3[gD];
+        const auto& XE = m.matrix3[gE];
+        const double ex = XE[0] - XD[0];
+        const double ey = XE[1] - XD[1];
+        const double L = std::sqrt(ex * ex + ey * ey);
+        if (L <= 0) continue;
+        const double nx = ey / L;
+        const double ny = -ex / L;
 
-		double vQ1y = 2. / 9. * x(A + nNodes) - 1. / 9. * x(B + nNodes) - 1. / 9. * x(C + nNodes) + 4. / 9. * x(D + nNodes) + 1. / 9. * x(E + nNodes) + 4. / 9. * x(F + nNodes);
-		double vQ2y = -1. / 9. * x(A + nNodes) + 2. / 9. * x(B + nNodes) - 1. / 9. * x(C + nNodes) + 4. / 9. * x(D + nNodes) + 4. / 9. * x(E + nNodes) + 1. / 9. * x(F + nNodes);
-		double vQ3y = -1. / 9. * x(A + nNodes) - 1. / 9. * x(B + nNodes) + 2. / 9. * x(C + nNodes) + 1. / 9. * x(D + nNodes) + 4. / 9. * x(E + nNodes) + 4. / 9. * x(F + nNodes);
-		double vQ4y = -1. / 9. * (x(A + nNodes) + x(B + nNodes) + x(C + nNodes)) + 4. / 9. * (x(D + nNodes) + x(E + nNodes) + x(F + nNodes));
+        // Zjisti, která lokální hrana to je a jak parametrizovat (s=0 na gD, s=1 na gE)
+        // Hrany referenčního trojúhelníku:
+        // AB: (xi,eta)=(s,0)     od A do B
+        // BC: (xi,eta)=(1-s,s)   od B do C
+        // CA: (xi,eta)=(0,1-s)   od C do A  (tj. s=0 na C, s=1 na A)
+        //
+        // My chceme orientaci podle (gD -> gE), takže případně s nahradíme (1-s).
 
-		mat vQ = { vQ1x, vQ2x, vQ3x, vQ4x, vQ1y, vQ2y, vQ3y, vQ4y };
+        auto map_edge_to_ref = [&](double s, double& xi, double& eta) {
+            if (adj.edgeId == 0) {
+                // AB
+                const bool D_is_A = (gD == gA);
+                const bool D_is_B = (gD == gB);
+                // očekáváme {gD,gE} = {gA,gB} v nějakém pořadí
+                const double ss = (D_is_A ? s : (1.0 - s));
+                xi = ss; eta = 0.0;
+            }
+            else if (adj.edgeId == 1) {
+                // BC: B->C
+                const bool D_is_B = (gD == gB);
+                const double ss = (D_is_B ? s : (1.0 - s));
+                xi = 1.0 - ss;
+                eta = ss;
+            }
+            else {
+                // CA: C->A (na referenci)
+                // Pokud gD==gC, pak ss=s. Pokud gD==gA, musíme obrátit (1-s).
+                const bool D_is_C = (gD == gC);
+                const double ss = (D_is_C ? s : (1.0 - s));
+                xi = 0.0;
+                eta = 1.0 - ss;
+            }
+            };
 
+        // tlak na hraně: bereme lineárně mezi koncovými vrcholy (gD,gE) – musí to být vertex uzly
+        const double pD = p_at_vertex(gD);
+        const double pE = p_at_vertex(gE);
 
+        // rychlosti v P2 uzlech trojúhelníku v pořadí [A,B,C,AB,BC,CA]
+        const int gU[6] = { gA, gB, gC, gAB, gBC, gCA };
+        double uval[6], vval[6];
+        for (int i = 0; i < 6; ++i) {
+            uval[i] = ux(gU[i]);
+            vval[i] = uy(gU[i]);
+        }
 
-		vector<int> verTri = { A, B, C, D, E, F };
+        // kvadratura po hraně
+        for (int q = 0; q < 3; ++q) {
+            const double s = Q[q];
+            const double w = W[q];
 
-		vector<double> cooA = result.matrix3[A];		// Sou�adnice vrchol� troj�heln�ku k
-		vector<double> cooB = result.matrix3[B];
-		vector<double> cooC = result.matrix3[C];
+            // (xi,eta) bod na hraně v referenčním trojúhelníku (orientace dle gD->gE)
+            double xi, eta;
+            map_edge_to_ref(s, xi, eta);
 
-		mat CoQ = {
-			{ cooA[0],cooB[0],cooC[0],(cooA[0] + cooB[0]) / 2, (cooB[0] + cooC[0]) / 2, (cooC[0] + cooA[0]) / 2},
-			{ cooA[1],cooB[1],cooC[1],(cooA[1] + cooB[1]) / 2, (cooB[1] + cooC[1]) / 2, (cooC[1] + cooA[1]) / 2},
-		};
+            // ∂Ni/∂xi, ∂Ni/∂eta
+            double dN_dxi[6], dN_deta[6];
+            p2_shape_derivs_ref(xi, eta, dN_dxi, dN_deta);
 
-		mat matA = {
-			{ cooB[0] - cooA[0], cooC[0] - cooA[0] },
-			{ cooB[1] - cooA[1], cooC[1] - cooA[1] },
-		};
+            // ∂Ni/∂x, ∂Ni/∂y : grad = invJ^T * grad_ref
+            // dN/dx = invJ00*dN/dxi + invJ10*dN/deta
+            // dN/dy = invJ01*dN/dxi + invJ11*dN/deta
+            double dux_dx = 0.0, dux_dy = 0.0;
+            double duy_dx = 0.0, duy_dy = 0.0;
 
-		double detA = matA(0, 0) * matA(1, 1) - matA(0, 1) * matA(1, 0);
+            for (int i = 0; i < 6; ++i) {
+                const double dNdx = invJ00 * dN_dxi[i] + invJ10 * dN_deta[i];
+                const double dNdy = invJ01 * dN_dxi[i] + invJ11 * dN_deta[i];
 
-		mat invA = {
-			{  matA(1,1) / detA, -matA(0,1) / detA },
-			{ -matA(1,0) / detA,  matA(0,0) / detA  },
-		};
+                dux_dx += uval[i] * dNdx;
+                dux_dy += uval[i] * dNdy;
 
-		mat gradFEx2 = invA(0, 0) * gradFEx_ref + invA(1, 0) * gradFEy_ref;
-		mat gradFEy2 = invA(0, 1) * gradFEx_ref + invA(1, 1) * gradFEy_ref;
+                duy_dx += vval[i] * dNdx;
+                duy_dy += vval[i] * dNdy;
+            }
 
-		mat gradFEx3 = invA(0, 0) * gradFEx_ref_3 + invA(1, 0) * gradFEy_ref_3;
-		mat gradFEy3 = invA(0, 1) * gradFEx_ref_3 + invA(1, 1) * gradFEy_ref_3;
+            // tlak v bodě (lineární mezi gD a gE podle s v orientaci gD->gE)
+            const double p = pD * (1.0 - s) + pE * s;
 
+            // 2*mu*D(u)
+            const double sxx = 2.0 * mu * dux_dx;
+            const double syy = 2.0 * mu * duy_dy;
+            const double sxy = mu * (dux_dy + duy_dx);
 
-		vector<int> index = { A, B, C, D, E, F, nNodes + A, nNodes + B, nNodes + C, nNodes + D, nNodes + E, nNodes + F };
+            // trakce t = -p n + (2mu D) n
+            const double tx = -p * nx + sxx * nx + sxy * ny;
+            const double ty = -p * ny + sxy * nx + syy * ny;
 
-		for (int i = 0; i < 12; ++i) {
+            Fx += tx * (L * w);
+            Fy += ty * (L * w);
+        }
+    }
 
-			for (int j = 0; j < 12; ++j) {
-				double k_val = 0;
-				double D = 0;
-				if ((i < 6 || j < 6) ^ (i > 5 || j > 5)) {
-					D = 1;
-				}
-				for (int l = 0; l < nQuadrature2; ++l) {
-
-					vector<double> gradFI_i = { gradFEx2(l,i), gradFEy2(l,i), gradFEx2(l + nQuadrature2,i), gradFEy2(nQuadrature2 + l,i) };
-					vector<double> gradFI_j = { gradFEx2(l,j), gradFEy2(l,j), gradFEx2(l + nQuadrature2,j), gradFEy2(nQuadrature2 + l,j) };
-
-					vector<double> vQl = { vQ(l),vQ(l + nQuadrature2),vQ(l),vQ(l + nQuadrature2) };
-
-					double konvekce_i = dotprod(vQl, gradFI_j);
-
-
-					k_val = k_val + detA / 2. * w4[l] * (mu * dotprod(gradFI_i, gradFI_j) + konvekce_i * basis_2(l, i) * D - pQ);
-
-				};
-				F_d = F_d + k_val;				
-				// zapis vysledneho soucinu vektoru-tenzoru na spravne misto do tripletu 
-
-				index_IJ++;
-			}
-
-		};
-	};
-
-
-
-	return assembledMatrix;
+    return { Fx, Fy };
 }

@@ -6,6 +6,7 @@
 #include "Massmatrix.h"
 //#include "mesh_t.h"
 #include "Aerodynamicforce.h"
+#include "Aerodynamicforce2.h"
 
 #include <Eigen/Sparse>
 #include <Eigen/Cholesky>
@@ -28,12 +29,12 @@ int main() {
 	//double  y = 0, dy = 0, ddy = 0, gama = 0.5, beta = 0.25, yn = 0, dyn = 0, ddyn = 0;
 
 	int t_step = 0;
-	int num_t_steps = 1000;
+	int num_t_steps = 100000;
 	//vector<double> vec_aero_F(num_t_steps, 0);
 	double t = 0;
 	double dt = 1./10.;
 
-	string meshFile = "Obdelnik_O_1847_800.txt";
+	string meshFile = "Obdelnik_1375.txt";
 
 	MatrixVectorResult result = GetTriangles(meshFile);
 	int nTri = result.integerResult;		// poèet trojúhelníkù
@@ -80,7 +81,7 @@ int main() {
 
 	for (int j = 0; j < num_t_steps; j++) {
 		if (j > 50) {
-			dt=0.05;
+			dt=0.005;
 		}
 		//for (int i = 0; i < 1; i++) {
 		//MatrixVectorResult result1 = GetTriangles(meshFile);
@@ -161,7 +162,7 @@ int main() {
 
 
 			// Kontrola konvergence
-			converged = (diffNorm < 0.005);
+			converged = (diffNorm < 0.0005);
 			if (converged == true) {
 				x = x_k;
 			}
@@ -173,15 +174,16 @@ int main() {
 		size_t dotPos1 = meshFile.find_last_of(".");
 		string File_Aero_F = "Aero_Force_"+ meshFile.substr(0, dotPos1) + ".txt";
 		vector<double> xvec(x.data(), x.data() + x.size());
-		vector<double> FF5 = AerodynamicForce(meshFile, result, 500, t, xvec);
-		vector<double> FF6 = AerodynamicForce(meshFile, result, 600, t, xvec);
-		double FF = FF5[1] + FF6[1];
+		vector<double> FF5 = AerodynamicForce2(meshFile, result, 500, t, xvec);
+		vector<double> FF6 = AerodynamicForce2(meshFile, result, 600, t, xvec);
+		double FFx = FF5[0] + FF6[0];
+		double FFy = FF5[1] + FF6[1];
 		std::ofstream file(File_Aero_F, std::ios::app);
 		
 		if (!file) {
 			std::cerr << "Nelze otevrit soubor pro zapis.\n";
 		}
-		file << j << " " << FF5[1] << " " << FF6[1] << " " << FF << "\n";
+		file << j <<  " " << FFx << " " << FFy << "\n";
 		
 		file.close();
 		std::cout << "Data byla zapsana do souboru \n";
